@@ -68,6 +68,21 @@ class DbtSource(pydantic.BaseModel):
     def domain(self) -> str:
         return self.fqn[1]
 
+    @property
+    def external_dag_id(self) -> Optional[str]:
+        return self.meta.get('external_dag_id')
+
+    @property
+    def external_task_id(self) -> Optional[str]:
+        return self.meta.get('external_task_id')
+
+    @property
+    def external_schedule(self) -> Optional[str]:
+        return self.meta.get('external_schedule')
+
+    def need_external_sensor(self) -> bool:
+        return bool(self.external_dag_id and self.external_task_id and self.external_schedule)
+
     def need_to_check_freshness(self) -> bool:
         if not self.config.enabled:
             return False

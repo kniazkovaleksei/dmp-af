@@ -332,7 +332,29 @@ class DagModel(DagComponent):
 
     def _init_source_dependencies_af(self, delayed_deps: DagDelayedDependencyRegistry):
         for source_dep in self._depends_on_sources:
-            if source_dep.need_to_check_freshness():
+            if source_dep.need_external_sensor():
+                upstream_schedule_tag = EScheduleTag[source_dep.external_schedule]()  # type: ignore[index]
+                execution_date_fns = AfExecutionDateFn(
+                    upstream_schedule_tag=upstream_schedule_tag,
+                    downstream_schedule_tag=self.domain_dag.schedule,
+                    wait_policy=WaitPolicy.last,
+                ).get_execution_dates()
+                for i, execution_date_fn in enumerate(execution_date_fns):
+                    if execution_date_fn is None:
+                        continue
+                    _suffix = f'__{i}' if len(execution_date_fns) > 1 else ''
+                    source_wait = DbtExternalSensor(
+                        dmp_af_config=self.domain_dag.config,
+                        task_id=f'wait_ext__{source_dep.name}{_suffix}__for__{self.safe_name}',
+                        task_group=self.af_component,
+                        external_dag_id=source_dep.external_dag_id,  # type: ignore[arg-type]
+                        external_task_id=source_dep.external_task_id,  # type: ignore[arg-type]
+                        execution_date_fn=execution_date_fn,
+                        dep_schedule=upstream_schedule_tag,
+                        dag=self.domain_dag.af_dag,  # type: ignore[arg-type]
+                    )
+                    delayed_deps(source_wait) >> delayed_deps(self.model_task)  # type: ignore[arg-type]
+            elif source_dep.need_to_check_freshness():
                 source_wait = DbtSourceFreshnessSensor(
                     task_id=f'wait_freshness__{source_dep.name}__for__{self.safe_name}',
                     task_group=self.af_component,
