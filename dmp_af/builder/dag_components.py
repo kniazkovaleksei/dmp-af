@@ -33,6 +33,7 @@ class DagComponent:
         # dmp-af components
         self._depends_on: set[DagComponent] = set()
         self._depends_on_sources: set[DbtSource] = set()
+        self._source_domain_dags: dict[DbtSource, Optional[DomainDag]] = {}
         self._domains_dependencies: dict[DomainDag, set[DagComponent]] = defaultdict(set)
         self.delayed_deps_registry = DagDelayedDependencyRegistry()
         self._small_tests: set[str] = set()
@@ -63,8 +64,9 @@ class DagComponent:
         if self.domain_dag.config.model_dependencies.wait_policy.per_domain:
             self._domains_dependencies[dep.domain_dag].add(dep)
 
-    def add_source_dependency(self, dep: DbtSource):
+    def add_source_dependency(self, dep: DbtSource, source_domain_dag: Optional[DomainDag] = None):
         self._depends_on_sources.add(dep)
+        self._source_domain_dags[dep] = source_domain_dag
 
     def add_small_test(self, resource_name: str):
         self._small_tests.add(resource_name)
@@ -336,15 +338,29 @@ class DagModel(DagComponent):
     def _init_source_dependencies_af(self, delayed_deps: DagDelayedDependencyRegistry):
         for source_dep in self._depends_on_sources:
             if source_dep.need_external_sensor():
-                source_name = source_dep.source_name
-                sensor_key = (source_name, source_dep.external_dag_id, source_dep.external_task_id)
+                source_domain_dag = self._source_domain_dags.get(source_dep)
+                sensor_key = (
+                    source_domain_dag.dag_name if source_domain_dag else source_dep.source_name,
+                    source_dep.external_dag_id,
+                    source_dep.external_task_id,
+                )
 
-                if source_name not in self.domain_dag.registered_source_sensors:
-                    self.domain_dag.registered_source_sensors[source_name] = TaskGroup(
-                        group_id=f'{source_name}__dependencies__group',
-                        dag=self.domain_dag.af_dag,
-                    )
-                source_sensor_group = self.domain_dag.registered_source_sensors[source_name]
+                if source_domain_dag:
+                    deps_registry = self.domain_dag.registered_domains_dependencies[source_domain_dag]
+                    if not deps_registry.task_group:
+                        deps_registry.task_group = TaskGroup(
+                            group_id=f'{source_domain_dag.dag_name}__dependencies__group',
+                            dag=self.domain_dag.af_dag,
+                        )
+                    source_sensor_group = deps_registry.task_group
+                else:
+                    group_key = source_dep.source_name
+                    if group_key not in self.domain_dag.registered_source_sensors:
+                        self.domain_dag.registered_source_sensors[group_key] = TaskGroup(
+                            group_id=f'{group_key}__dependencies__group',
+                            dag=self.domain_dag.af_dag,
+                        )
+                    source_sensor_group = self.domain_dag.registered_source_sensors[group_key]
 
                 if sensor_key in self.domain_dag.registered_source_sensor_tasks:
                     for wait_task in self.domain_dag.registered_source_sensor_tasks[sensor_key]:

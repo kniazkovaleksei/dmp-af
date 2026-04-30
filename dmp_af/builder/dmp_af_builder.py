@@ -192,7 +192,13 @@ class DmpAfGraph:
                 for upstream in node.depends_on:
                     self._models[node.unique_id].add_dependency(self._models[upstream])
                 for upstream in node.depends_on_sources:
-                    self._models[node.unique_id].add_source_dependency(sources[upstream])
+                    source = sources[upstream]
+                    source_domain_dag = next(
+                        (d for d in self._domain_dags_registry._domain_dags.values()
+                         if d.domain_name == source.domain),
+                        None,
+                    )
+                    self._models[node.unique_id].add_source_dependency(source, source_domain_dag)
 
             elif node.is_small_test():
                 for upstream in node.depends_on:
