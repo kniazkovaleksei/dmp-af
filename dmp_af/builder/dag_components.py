@@ -197,7 +197,10 @@ class DagComponent:
 
     def _get_source_deps_with_freshness_check(self) -> list[DbtSource]:
         return [dep for dep in self._depends_on_sources if dep.need_to_check_freshness()]
-
+    
+    def _get_source_deps_with_external_sensor(self) -> list[DbtSource]:
+        return [dep for dep in self._depends_on_sources if dep.need_external_sensor()]
+    
     def _create_task_group(self) -> Optional[TaskGroup]:
         """
         Create a task group for the model if it has external dependencies or small tests. If waits for all external
@@ -207,6 +210,7 @@ class DagComponent:
             not self._small_tests
             and (not self._get_ext_deps() or self.domain_dag.config.model_dependencies.wait_policy.per_domain)
             and not self._get_source_deps_with_freshness_check()
+            and not self._get_source_deps_with_external_sensor()
             and not self.node_config.enable_from_dttm
             and not self.node_config.disable_from_dttm
             and not self.node_config.tableau_refresh_tasks
@@ -331,8 +335,15 @@ class DagModel(DagComponent):
         return endpoint_task
 
     def _init_source_dependencies_af(self, delayed_deps: DagDelayedDependencyRegistry):
+        seen_external_sensors: set[tuple[str, str, str]] = set()
+
         for source_dep in self._depends_on_sources:
             if source_dep.need_external_sensor():
+                sensor_key = (source_dep.external_dag_id, source_dep.external_task_id)
+                if sensor_key in seen_external_sensors:
+                    continue
+                seen_external_sensors.add(sensor_key)
+
                 upstream_schedule_tag = EScheduleTag[source_dep.external_schedule]()  # type: ignore[index]
                 execution_date_fns = AfExecutionDateFn(
                     upstream_schedule_tag=upstream_schedule_tag,
@@ -345,7 +356,7 @@ class DagModel(DagComponent):
                     _suffix = f'__{i}' if len(execution_date_fns) > 1 else ''
                     source_wait = DbtExternalSensor(
                         dmp_af_config=self.domain_dag.config,
-                        task_id=f'wait_ext__{source_dep.name}{_suffix}__for__{self.safe_name}',
+                        task_id=f'wait_ext__{source_dep.external_dag_id}__{source_dep.external_task_id}{_suffix}__for__{self.safe_name}',
                         task_group=self.af_component,
                         external_dag_id=source_dep.external_dag_id,  # type: ignore[arg-type]
                         external_task_id=source_dep.external_task_id,  # type: ignore[arg-type]
@@ -364,7 +375,6 @@ class DagModel(DagComponent):
                     source_identifier=source_dep.identifier,
                     dmp_af_config=self.domain_dag.config,
                 )
-
                 delayed_deps(source_wait) >> delayed_deps(self.model_task)  # type: ignore[arg-type]
 
     def _init_supplemental_dependencies_af(self, delayed_deps: DagDelayedDependencyRegistry):
