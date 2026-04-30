@@ -7,6 +7,7 @@ if TYPE_CHECKING:
         from airflow.models.dag import DAG
     except (ModuleNotFoundError, ImportError):
         from airflow.sdk import DAG  # type: ignore[no-redef]
+    from airflow.utils.task_group import TaskGroup
 
 try:
     from airflow.operators.empty import EmptyOperator
@@ -47,6 +48,8 @@ class DomainDag:
         self.registered_domains_dependencies: dict[DomainDag, RegistryDomainDependencies] = defaultdict(
             RegistryDomainDependencies
         )
+        self.registered_source_sensors: dict[str, 'TaskGroup'] = {}
+        self.registered_source_sensor_tasks: dict[tuple[str, str, str], list] = {}
 
         self.af_dag: 'DAG | None' = None
 
